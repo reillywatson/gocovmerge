@@ -100,9 +100,10 @@ func main() {
 	var merged []*cover.Profile
 
 	// limit the number of files we process at a time to GOMAXPROCS
-	inflightLimiter := make(chan struct{}, runtime.GOMAXPROCS(0))
+	nprocs := runtime.GOMAXPROCS(0)
+	inflightLimiter := make(chan struct{}, nprocs)
 	go func() {
-		for range runtime.GOMAXPROCS(0) {
+		for i := 0; i < nprocs; i++ {
 			inflightLimiter <- struct{}{}
 		}
 	}()
