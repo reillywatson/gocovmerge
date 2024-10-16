@@ -8,7 +8,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"sort"
+	"sync"
 
 	"golang.org/x/tools/cover"
 )
@@ -97,14 +99,39 @@ func main() {
 
 	var merged []*cover.Profile
 
+	// limit the number of files we process at a time to GOMAXPROCS
+	inflightLimiter := make(chan struct{}, runtime.GOMAXPROCS(0))
+	go func() {
+		for range runtime.GOMAXPROCS(0) {
+			inflightLimiter <- struct{}{}
+		}
+	}()
+	allProfiles := make(chan *cover.Profile)
+
+	var wg sync.WaitGroup
 	for _, file := range flag.Args() {
-		profiles, err := cover.ParseProfiles(file)
-		if err != nil {
-			log.Fatalf("failed to parse profiles: %v", err)
-		}
-		for _, p := range profiles {
-			merged = addProfile(merged, p)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-inflightLimiter
+			defer func() {
+				inflightLimiter <- struct{}{}
+			}()
+			profiles, err := cover.ParseProfiles(file)
+			if err != nil {
+				log.Fatalf("failed to parse profiles: %v", err)
+			}
+			for _, p := range profiles {
+				allProfiles <- p
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(allProfiles)
+	}()
+	for p := range allProfiles {
+		merged = addProfile(merged, p)
 	}
 
 	dumpProfiles(merged, os.Stdout)
